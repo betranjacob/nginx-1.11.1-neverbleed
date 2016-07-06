@@ -1,0 +1,178 @@
+diff -ur nginx-1.11.1-original/auto/cc/gcc nginx-1.11.1/auto/cc/gcc
+--- nginx-1.11.1-original/auto/cc/gcc	2016-07-06 14:37:15.853574782 +0100
++++ nginx-1.11.1/auto/cc/gcc	2016-06-22 15:02:40.648952388 +0100
+@@ -173,7 +173,7 @@
+ 
+ 
+ # stop on warning
+-CFLAGS="$CFLAGS -Werror"
++#CFLAGS="$CFLAGS -Werror"
+ 
+ # debug
+ CFLAGS="$CFLAGS -g"
+diff -ur nginx-1.11.1-original/auto/modules nginx-1.11.1/auto/modules
+--- nginx-1.11.1-original/auto/modules	2016-07-06 14:37:15.853574782 +0100
++++ nginx-1.11.1/auto/modules	2016-06-23 00:47:33.770356306 +0100
+@@ -1119,8 +1119,10 @@
+     ngx_module_type=CORE
+     ngx_module_name=ngx_openssl_module
+     ngx_module_incs=
+-    ngx_module_deps=src/event/ngx_event_openssl.h
+-    ngx_module_srcs="src/event/ngx_event_openssl.c
++    ngx_module_deps="src/event/ngx_event_openssl.h \
++    				 src/event/neverbleed.h"
++    ngx_module_srcs="src/event/ngx_event_openssl.c \
++    				 src/event/neverbleed.c \
+                      src/event/ngx_event_openssl_stapling.c"
+     ngx_module_libs=
+     ngx_module_link=YES
+Only in nginx-1.11.1/: backup-062320160057-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: backup-062320162223-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: backup-062320162247-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: backup-062420161622-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: backup-062520161256-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: backup-062820161052-pre-nginx-libressl.tgz
+Only in nginx-1.11.1/: .cproject
+Only in nginx-1.11.1/: description-pak
+Only in nginx-1.11.1/: doc-pak
+Only in nginx-1.11.1/: Makefile
+Only in nginx-1.11.1/: nginx-libressl_1.11.1-1_amd64.deb
+Only in nginx-1.11.1/: objs
+Only in nginx-1.11.1/: .project
+diff -ur nginx-1.11.1-original/src/core/nginx.c nginx-1.11.1/src/core/nginx.c
+--- nginx-1.11.1-original/src/core/nginx.c	2016-07-06 14:37:15.861574749 +0100
++++ nginx-1.11.1/src/core/nginx.c	2016-06-23 00:52:04.701439959 +0100
+@@ -228,7 +228,12 @@
+ 
+     /* STUB */
+ #if (NGX_OPENSSL)
++#if 0
+     ngx_ssl_init(log);
++#else
++    neverbleed_t nb;
++    ngx_ssl_init(log, &nb);
++#endif
+ #endif
+ 
+     /*
+Only in nginx-1.11.1/src/event: neverbleed.c
+Only in nginx-1.11.1/src/event: neverbleed.h
+diff -ur nginx-1.11.1-original/src/event/ngx_event_openssl.c nginx-1.11.1/src/event/ngx_event_openssl.c
+--- nginx-1.11.1-original/src/event/ngx_event_openssl.c	2016-07-06 14:37:15.861574749 +0100
++++ nginx-1.11.1/src/event/ngx_event_openssl.c	2016-06-23 00:50:10.639198544 +0100
+@@ -8,6 +8,7 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ #include <ngx_event.h>
++#include <neverbleed.h>
+ 
+ 
+ #define NGX_SSL_PASSWORD_BUFFER_SIZE  4096
+@@ -110,8 +111,13 @@
+ 
+ 
+ ngx_int_t
++#if 0
+ ngx_ssl_init(ngx_log_t *log)
++#else
++ngx_ssl_init(ngx_log_t *log, neverbleed_t *nb)
++#endif
+ {
++	 char errbuf[NEVERBLEED_ERRBUF_SIZE];
+ #if OPENSSL_VERSION_NUMBER >= 0x10100003L
+ 
+     OPENSSL_init_ssl(OPENSSL_INIT_LOAD_CONFIG, NULL);
+@@ -126,6 +132,13 @@
+     SSL_load_error_strings();
+ 
+     OpenSSL_add_all_algorithms();
++#if 1
++    if (neverbleed_init(nb, errbuf) != 0) {
++    	ngx_ssl_error(NGX_LOG_ALERT, log, 0, "neverbleed_init failed");
++        return NGX_ERROR;
++    }
++    log->data = nb;
++#endif
+ 
+ #endif
+ 
+@@ -542,9 +555,13 @@
+     }
+ 
+     for ( ;; ) {
+-
++#if 0
+         if (SSL_CTX_use_PrivateKey_file(ssl->ctx, (char *) key->data,
+                                         SSL_FILETYPE_PEM)
++#else
++    	 char errbuf[NEVERBLEED_ERRBUF_SIZE];
++    	 if (neverbleed_load_private_key_file((neverbleed_t *) ssl->log->data, ssl->ctx, (char *) key->data,errbuf)
++#endif
+             != 0)
+         {
+             break;
+@@ -557,7 +574,11 @@
+         }
+ 
+         ngx_ssl_error(NGX_LOG_EMERG, ssl->log, 0,
++#if 0
+                       "SSL_CTX_use_PrivateKey_file(\"%s\") failed", key->data);
++#else
++                      "neverbleed_load_private_key_file(\"%s\") failed: %s", key->data, errbuf);
++#endif
+         return NGX_ERROR;
+     }
+ 
+diff -ur nginx-1.11.1-original/src/event/ngx_event_openssl.h nginx-1.11.1/src/event/ngx_event_openssl.h
+--- nginx-1.11.1-original/src/event/ngx_event_openssl.h	2016-07-06 14:37:15.861574749 +0100
++++ nginx-1.11.1/src/event/ngx_event_openssl.h	2016-06-23 00:52:01.373485909 +0100
+@@ -11,6 +11,9 @@
+ 
+ #include <ngx_config.h>
+ #include <ngx_core.h>
++#if 1
++#include <neverbleed.h>
++#endif
+ 
+ #include <openssl/ssl.h>
+ #include <openssl/err.h>
+@@ -55,6 +58,7 @@
+ 
+ 
+ typedef struct {
++	neverbleed_t               *nb;
+     SSL_CTX                    *ctx;
+     ngx_log_t                  *log;
+     size_t                      buffer_size;
+@@ -137,8 +141,11 @@
+ 
+ #define NGX_SSL_BUFSIZE  16384
+ 
+-
++#if 0
+ ngx_int_t ngx_ssl_init(ngx_log_t *log);
++#else
++ngx_int_t ngx_ssl_init(ngx_log_t *log, neverbleed_t *nb);
++#endif
+ ngx_int_t ngx_ssl_create(ngx_ssl_t *ssl, ngx_uint_t protocols, void *data);
+ ngx_int_t ngx_ssl_certificates(ngx_conf_t *cf, ngx_ssl_t *ssl,
+     ngx_array_t *certs, ngx_array_t *keys, ngx_array_t *passwords);
+diff -ur nginx-1.11.1-original/src/os/unix/ngx_process_cycle.c nginx-1.11.1/src/os/unix/ngx_process_cycle.c
+--- nginx-1.11.1-original/src/os/unix/ngx_process_cycle.c	2016-07-06 14:37:15.905574572 +0100
++++ nginx-1.11.1/src/os/unix/ngx_process_cycle.c	2016-06-23 22:41:57.699326755 +0100
+@@ -840,13 +840,14 @@
+                           "initgroups(%s, %d) failed",
+                           ccf->username, ccf->group);
+         }
+-
++#if 0
+         if (setuid(ccf->user) == -1) {
+             ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+                           "setuid(%d) failed", ccf->user);
+             /* fatal */
+             exit(2);
+         }
++#endif
+     }
+ 
+     if (worker >= 0) {
